@@ -1,4 +1,19 @@
+# Ignorar carpetas de compilación en cualquier profundidad
 **/build/
 **/sdkconfig
 **/sdkconfig.old
+**/managed_components/
+
+# Ignorar archivos internos del Workspace de Eclipse/Espressif-IDE
 .metadata/
+RemoteSystemsTempFiles/
+.settings/
+.project
+.cproject
+
+# Ignorar proyectos
+02_NEC_RMT/
+
+# Opcional: Ignorar archivos temporales de Python (si usas scripts)
+__pycache__/
+*.py[cod]
