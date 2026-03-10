@@ -1,2 +1,0 @@
-idf_component_register(SRCS "main.c"
-                       PRIV_REQUIRES ir_tx ir_rx ir_nec_encoder funciones config esp_driver_rmt)
