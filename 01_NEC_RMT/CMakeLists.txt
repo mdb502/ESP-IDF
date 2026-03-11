@@ -5,3 +5,5 @@ set(EXTRA_COMPONENT_DIRS "components")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(01_NEC_RMT)
+
+spiffs_create_partition_image(storage data FLASH_IN_PROJECT)

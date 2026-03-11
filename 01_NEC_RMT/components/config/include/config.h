@@ -15,7 +15,7 @@
 // --- Tópicos ---
 #define TOPIC_MODO      "v1/esp32/ir/config/modo"
 #define TOPIC_LEARN     "v1/esp32/ir/data/aprendido"
-#define TOPIC_CMD       "v1/esp32/ir/control/comando"
+#define TOPIC_CMD       "v1/esp32/ir/control"
 
 
 // --- Definiciones de Modos del Sistema ---
@@ -25,7 +25,7 @@ typedef enum {
 } modo_sistema_t;
 
 // Variable de configuración inicial (Paso 1)
-#define MODO_CONFIGURADO_INICIAL  MODO_APRENDIZAJE
+#define MODO_CONFIGURADO_INICIAL  MODO_REMOTO_CONTROL
 
 #define EXAMPLE_IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
 #define EXAMPLE_IR_TX_GPIO_NUM       18
