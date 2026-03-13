@@ -17,6 +17,7 @@
 #include "mqtt_client.h"
 #include <string.h>
 #include <stdlib.h>
+#include "cJSON.h"
 
 static const char *TAG = "MQTT_CORE";
 static esp_mqtt_client_handle_t client = NULL;
@@ -33,38 +34,30 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "Conectado al Broker HiveMQ Cloud.");
-            esp_mqtt_client_subscribe(client, TOPIC_MODO, 1);
-            esp_mqtt_client_subscribe(client, TOPIC_CMD, 1);
+			esp_mqtt_client_subscribe(client, MQTT_TOPIC_COMANDO, 1);
+    		ESP_LOGI(TAG, "Suscrito a: %s", MQTT_TOPIC_COMANDO);
             break;
 
         case MQTT_EVENT_DATA: {
-            // --- CASO 1: COMANDO IR ---
-            if (strncmp(event->topic, TOPIC_CMD, event->topic_len) == 0) {
-                char *mensaje_para_cola = malloc(event->data_len + 1);
-                if (mensaje_para_cola != NULL) {
-                    memcpy(mensaje_para_cola, event->data, event->data_len);
-                    mensaje_para_cola[event->data_len] = '\0';
-
-                    if (xQueueSend(cola_control_ir, &mensaje_para_cola, 0) != pdPASS) {
-                        free(mensaje_para_cola);
-                        ESP_LOGW(TAG, "Cola llena, comando descartado");
-                    } else {
-                        ESP_LOGI(TAG, "Comando IR enviado a la cola");
-                    }
-                }
-            } 
-            // --- CASO 2: CAMBIO DE MODO ---
-            else if (strncmp(event->topic, TOPIC_MODO, event->topic_len) == 0) {
-                if (mode_callback != NULL) {
-                    if (strncmp(event->data, "LEARN", event->data_len) == 0) {
-                        mode_callback(MODO_APRENDIZAJE);
-                    } else if (strncmp(event->data, "REMOTE", event->data_len) == 0) {
-                        mode_callback(MODO_REMOTO_CONTROL);
-                    }
-                }
-            }
-            break;
-        }
+	        cJSON *root = cJSON_ParseWithLength(event->data, event->data_len);
+	        if (!root) return;
+	
+	        cJSON *accion = cJSON_GetObjectItem(root, "accion");
+	        if (cJSON_IsString(accion)) {
+	            if (strcmp(accion->valuestring, "aprender") == 0) {
+	                actualizar_contexto_aprendizaje(event->data, event->data_len);
+	                if (mode_callback) mode_callback(MODO_APRENDIZAJE);
+	            } 
+	            else if (strcmp(accion->valuestring, "disparar") == 0) {
+	                if (mode_callback) mode_callback(MODO_REMOTO_CONTROL);
+	                // Clonar el JSON para la cola (el main hará el free)
+	                char *copy = strndup(event->data, event->data_len);
+	                if (xQueueSend(cola_control_ir, &copy, 0) != pdPASS) free(copy);
+	            }
+	        }
+	        cJSON_Delete(root);
+	        break;
+	    }
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "Desconectado del servidor MQTT.");

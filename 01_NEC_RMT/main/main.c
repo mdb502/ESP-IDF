@@ -7,10 +7,19 @@
 #include "funciones.h" // Aquí reside ahora toda la lógica IR
 #include "config.h"
 #include "esp_spiffs.h"
+#include "cJSON.h"
+#include "con_firebase.h"
+#include "driver/rmt_tx.h" // Para rmt_enable de transmisión
+#include "driver/rmt_rx.h" // Para rmt_enable de recepción
+
 
 static const char *TAG = "MAIN_APP";
 static TaskHandle_t xTareaIR = NULL;
 QueueHandle_t cola_control_ir = NULL;
+// Variable global para saber qué estamos aprendiendo
+static context_aprendizaje_t ctx_learn = {0};
+static bool listo_para_capturar = false;
+
 
 // --- PROTOTIPOS ---
 void tarea_modo_aprendizaje(void *pvParameters);
@@ -59,20 +68,45 @@ void tarea_modo_remoto(void *pvParameters) {
     }
 }
 
+
+
+
 // --- TAREA: APRENDIZAJE DE CÓDIGOS ---
+
+void actualizar_contexto_aprendizaje(const char* data, int len) {
+    cJSON *root = cJSON_ParseWithLength(data, len);
+    if (root) {
+        cJSON *d = cJSON_GetObjectItem(root, "dispositivo");
+        cJSON *b = cJSON_GetObjectItem(root, "boton");
+        if (d && b) {
+            strncpy(ctx_learn.dispositivo, d->valuestring, 31);
+            strncpy(ctx_learn.boton, b->valuestring, 19);
+            listo_para_capturar = true;
+            ESP_LOGI(TAG, "Configurado para aprender: %s -> %s", ctx_learn.dispositivo, ctx_learn.boton);
+        }
+        cJSON_Delete(root);
+    }
+}
+
+
 void tarea_modo_aprendizaje(void *pvParameters) {
-    // Nota: funciones_esperar_y_parsear_ir debe ser implementada en funciones.c
-    // para encapsular el xQueueReceive del canal RX.
     while (1) {
+        if (!listo_para_capturar) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         uint16_t addr = 0, cmd = 0;
         if (funciones_esperar_y_parsear_ir(&addr, &cmd) == ESP_OK) {
-            char payload[128];
-            snprintf(payload, sizeof(payload), 
-                     "{\"id\":\"NUEVO_DISP\", \"addr\":\"0x%04X\", \"cmd\":\"0x%04X\"}", 
-                     addr, cmd);
-
-            mqtt_enviar_raw(TOPIC_LEARN, payload);
-            ESP_LOGI(TAG, "MQTT Learn enviado: %s", payload);
+            ESP_LOGI(TAG, "Capturado IR: 0x%04X 0x%04X. Subiendo a Firebase...", addr, cmd);
+            
+            if (con_firebase_patch_comando(ctx_learn.dispositivo, ctx_learn.boton, addr, cmd) == ESP_OK) {
+                // Notificar éxito a la App vía MQTT
+                mqtt_enviar_raw(MQTT_TOPIC_EVENTO, "{\"status\":\"aprendido_ok\"}");
+                listo_para_capturar = false; // Esperar nueva orden de la App
+            } else {
+                mqtt_enviar_raw(MQTT_TOPIC_EVENTO, "{\"status\":\"ERROR_CLOUD\"}");
+            }
         }
     }
 }
@@ -89,16 +123,22 @@ void app_main(void) {
     funciones_db_init(); // Carga la DB en RAM
 
     if (wifi_init_sta() == ESP_OK) {
-        funciones_hardware_init(); // Inicia TX y RX internamente
-        
-        cola_control_ir = xQueueCreate(10, sizeof(char *));
-        
-        // Iniciamos en modo remoto por defecto
-        cambiar_modo_trabajo(MODO_REMOTO_CONTROL);
-        
-        // Pasamos el callback para cambios de modo vía MQTT
-        con_mqtt_init(cambiar_modo_trabajo);
-    }
+	    // 1. Inicializa TX, RX y crea los handles (canales)
+	    funciones_hardware_init(); 
+	    
+	    // 2. IMPORTANTE: Habilitar los canales una sola vez aquí
+	    // Usamos la estructura global que definiste en funciones.c (ir_core)
+	    rmt_enable(ir_core.tx_chan);
+	    rmt_enable(ir_core.rx_chan);
+	
+	    cola_control_ir = xQueueCreate(10, sizeof(char *));
+	    
+	    // 3. Iniciar modo por defecto
+	    cambiar_modo_trabajo(MODO_REMOTO_CONTROL);
+	    
+	    // 4. Iniciar MQTT
+	    con_mqtt_init(cambiar_modo_trabajo);
+	}
 }
 
 // --- IMPLEMENTACIÓN DE INIT_SPIFFS ---

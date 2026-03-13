@@ -5,6 +5,25 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "driver/rmt_types.h"
+#include "driver/rmt_tx.h" // Añadido para los handles
+#include "driver/rmt_rx.h" // Añadido para los handles
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+
+
+/**
+ * @brief Estructura central de hardware IR
+ */
+typedef struct {
+    rmt_channel_handle_t tx_chan;
+    rmt_channel_handle_t rx_chan;
+    rmt_encoder_handle_t encoder;
+    QueueHandle_t rx_queue;
+} ir_core_t;
+
+// Declaramos que ir_core existe globalmente en funciones.c
+extern ir_core_t ir_core;
+
 
 /**
  * @brief Estructura para retornar los resultados de búsqueda de códigos IR
@@ -53,5 +72,16 @@ esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd);
  * @brief Parsea una trama NEC desde símbolos RMT.
  */
 bool funciones_nec_parse_frame(rmt_symbol_word_t *rmt_symbols, uint16_t *addr, uint16_t *cmd);
+
+/**
+ * @brief Actualiza el contexto de qué dispositivo/botón se está aprendiendo.
+ */
+void actualizar_contexto_aprendizaje(const char* data, int len);
+
+/**
+ * @brief Envía un comando IR capturado a Firebase (Implementado en con_firebase.c)
+ */
+esp_err_t con_firebase_patch_comando(const char* disp, const char* btn, uint16_t addr, uint16_t cmd);
+
 
 #endif // FUNCIONES_H

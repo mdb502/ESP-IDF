@@ -13,36 +13,38 @@
 
 static const char *TAG = "FUNC_CORE";
 
-// Estructura interna privada: Centralizamos TODO el hardware aquí
-static struct {
-    rmt_channel_handle_t tx_chan;
-    rmt_encoder_handle_t encoder;
-    rmt_channel_handle_t rx_chan;
-    QueueHandle_t rx_queue;
-    cJSON *db_cache;
-} ir_core = {0};
+// Definición de la variable global
+ir_core_t ir_core = {0};
+
+static cJSON *db_cache = NULL;
 
 /**
  * @brief Carga la DB desde SPIFFS a la RAM
  */
 esp_err_t funciones_db_init(void) {
-    if (ir_core.db_cache) cJSON_Delete(ir_core.db_cache);
+    // Usamos la variable static local, no ir_core
+    if (db_cache) cJSON_Delete(db_cache);
 
     FILE* f = fopen("/spiffs/db_controles.json", "r");
-    if (f == NULL) return ESP_FAIL;
+    if (f == NULL) {
+        ESP_LOGE(TAG, "No se pudo abrir el archivo de DB");
+        return ESP_FAIL;
+    }
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
     char *data = malloc(fsize + 1);
+    if (!data) return ESP_ERR_NO_MEM; // Buena práctica: check de memoria
+
     fread(data, 1, fsize, f);
     fclose(f);
     data[fsize] = 0;
 
-    ir_core.db_cache = cJSON_Parse(data);
+    db_cache = cJSON_Parse(data); // <--- Cambio aquí
     free(data);
 
-    if (ir_core.db_cache == NULL) {
+    if (db_cache == NULL) { // <--- Cambio aquí
         ESP_LOGE(TAG, "Error al parsear JSON inicial");
         return ESP_FAIL;
     }
@@ -50,19 +52,16 @@ esp_err_t funciones_db_init(void) {
     return ESP_OK;
 }
 
+
 /**
  * @brief Inicializa TX y RX (Hardware opaco para el main)
  */
 void funciones_hardware_init(void) {
-    // Inicializar Transmisor
+    // Inicializar Transmisor y Receptor
     ir_tx_init(&ir_core.tx_chan, &ir_core.encoder);
-    rmt_enable(ir_core.tx_chan);
-
-    // Inicializar Receptor
     ir_rx_init(&ir_core.rx_chan, &ir_core.rx_queue);
-    rmt_enable(ir_core.rx_chan);
 
-    ESP_LOGI(TAG, "Hardware IR (TX y RX) inicializado y habilitado");
+    ESP_LOGI(TAG, "Hardware IR inicializado y listo para habilitar.");
 }
 
 /**
@@ -77,17 +76,53 @@ esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd) {
         .signal_range_max_ns = 12000000,
     };
 
-    // Disparamos la escucha
-    ESP_ERROR_CHECK(rmt_receive(ir_core.rx_chan, raw_symbols, sizeof(raw_symbols), &receive_cfg));
+    // --- REINICIO DE EMERGENCIA SILENCIOSO ---
+    // Si el driver está confundido, lo forzamos a un estado conocido
+    rmt_disable(ir_core.rx_chan); 
+    rmt_enable(ir_core.rx_chan); 
 
-    // Esperamos el evento de la cola interna
-    if (xQueueReceive(ir_core.rx_queue, &rx_data, portMAX_DELAY) == pdPASS) {
-        if (rx_data.num_symbols == 34 && funciones_nec_parse_frame(rx_data.received_symbols, addr, cmd)) {
+    // Limpiamos la cola de cualquier residuo
+    xQueueReset(ir_core.rx_queue);
+
+    // Intentamos recibir
+    esp_err_t ret = rmt_receive(ir_core.rx_chan, raw_symbols, sizeof(raw_symbols), &receive_cfg);
+    
+    if (ret != ESP_OK) {
+        // Si sigue fallando, es que algo más grave pasa con el GPIO o el Handle
+        ESP_LOGE("FUNC", "Error persistente en RMT: %s", esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(500)); 
+        return ret;
+    }
+
+    ESP_LOGI("FUNC", "Escuchando IR (Modo Aprendizaje)...");
+	
+/*
+    // Esperamos los 10 segundos
+    if (xQueueReceive(ir_core.rx_queue, &rx_data, pdMS_TO_TICKS(10000)) == pdPASS) {
+        if (rx_data.num_symbols >= 34 && funciones_nec_parse_frame(rx_data.received_symbols, addr, cmd)) {
             return ESP_OK;
         }
+        ESP_LOGW("FUNC", "Señal recibida no es NEC o está incompleta");
+    } else {
+        ESP_LOGW("FUNC", "Timeout: No se detectó ninguna señal");
     }
-    return ESP_FAIL;
+
+*/
+	if (xQueueReceive(ir_core.rx_queue, &rx_data, pdMS_TO_TICKS(10000)) == pdPASS) {
+        // Log de diagnóstico:
+        ESP_LOGI("DIAG", "Símbolos recibidos: %d", rx_data.num_symbols);
+
+        if (rx_data.num_symbols >= 34 && funciones_nec_parse_frame(rx_data.received_symbols, addr, cmd)) {
+            return ESP_OK;
+        } else {
+            ESP_LOGW("DIAG", "La señal no coincide con el protocolo NEC esperado.");
+        }
+    }
+    
+    return ESP_FAIL; 
 }
+
+
 
 
 bool funciones_check_in_range(uint32_t signal_duration, uint32_t spec_duration) {
@@ -147,32 +182,27 @@ void funciones_parse_nec_display(rmt_symbol_word_t *rmt_symbols, size_t symbol_n
  */
 resultado_busqueda_ir_t funciones_procesar_control_mqtt(const char *json_data, int len) {
     resultado_busqueda_ir_t res = {0, 0, false};
-    if (!ir_core.db_cache) return res;
+    
+    // 1. Usar la variable local db_cache
+    if (!db_cache) return res; 
 
     cJSON *root_mqtt = cJSON_ParseWithLength(json_data, len);
-    if (!root_mqtt) return res;
-
     cJSON *id_buscado = cJSON_GetObjectItem(root_mqtt, "id");
     cJSON *cmd_buscado = cJSON_GetObjectItem(root_mqtt, "c");
 
-    if (cJSON_IsString(id_buscado) && cJSON_IsString(cmd_buscado)) {
-        cJSON *dispositivo = NULL;
-        cJSON_ArrayForEach(dispositivo, ir_core.db_cache) {
-            cJSON *id_db = cJSON_GetObjectItem(dispositivo, "id");
-            if (cJSON_IsString(id_db) && strcmp(id_db->valuestring, id_buscado->valuestring) == 0) {
-                cJSON *comandos = cJSON_GetObjectItem(dispositivo, "comandos");
-                cJSON *cmd_obj = NULL;
-                cJSON_ArrayForEach(cmd_obj, comandos) {
-                    cJSON *c_name = cJSON_GetObjectItem(cmd_obj, "c");
-                    if (cJSON_IsString(c_name) && strcmp(c_name->valuestring, cmd_buscado->valuestring) == 0) {
-                        res.address = (uint16_t)strtol(cJSON_GetObjectItem(cmd_obj, "addr")->valuestring, NULL, 16);
-                        res.command = (uint16_t)strtol(cJSON_GetObjectItem(cmd_obj, "cmd")->valuestring, NULL, 16);
-                        res.encontrado = true;
-                        break;
-                    }
-                }
+    if (id_buscado && cmd_buscado) {
+        // 2. Aquí estaba el error, cambiamos ir_core.db_cache por db_cache
+        cJSON *cremotos = cJSON_GetObjectItem(db_cache, "CRemotos");
+        cJSON *disp = cJSON_GetObjectItem(cremotos, id_buscado->valuestring);
+        
+        if (disp) {
+            cJSON *btn = cJSON_GetObjectItem(disp, cmd_buscado->valuestring);
+            if (cJSON_IsString(btn)) {
+                uint32_t raw = strtoul(btn->valuestring, NULL, 16);
+                res.address = (raw >> 16) & 0xFFFF;
+                res.command = raw & 0xFFFF;
+                res.encontrado = true;
             }
-            if (res.encontrado) break;
         }
     }
     cJSON_Delete(root_mqtt);

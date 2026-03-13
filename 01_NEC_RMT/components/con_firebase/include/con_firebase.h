@@ -1,13 +1,9 @@
 #ifndef CON_FIREBASE_H
 #define CON_FIREBASE_H
 
-#include <stdbool.h>
 #include "esp_err.h"
+#include <stdint.h>
 
-// Inicializa la conexión con Firebase y descarga el JSON de controles
-esp_err_t con_firebase_sync_db(const char* dispositivo_id);
-
-// Verifica si hay actualizaciones en la nube
-bool con_firebase_check_updates(void);
+esp_err_t con_firebase_patch_comando(const char* path_db, const char* btn, uint16_t addr, uint16_t cmd);
 
 #endif

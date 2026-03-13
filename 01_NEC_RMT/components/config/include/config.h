@@ -2,8 +2,8 @@
 
 
 //WiFi
-#define WIFI_SSID      "mdb2.4-2"
-#define WIFI_PASS      "mdb2.4-2 segundo piso"
+#define WIFI_SSID      "mdb2.4"
+#define WIFI_PASS      "mdb2.4 segundo piso"
 
 //HiveMQ Cloud
 #define MQTT_URL       "mqtts://ce8c66f8369340a68d67bd9634f441c4.s2.eu.hivemq.cloud"
@@ -13,9 +13,11 @@
 #define MQTT_CLIENT_ID "ESP32_Escritorio"
 
 // --- Tópicos ---
-#define TOPIC_MODO      "v1/esp32/ir/config/modo"
-#define TOPIC_LEARN     "v1/esp32/ir/data/aprendido"
-#define TOPIC_CMD       "v1/esp32/ir/control"
+//#define TOPIC_MODO      "v1/esp32/ir/config/modo"
+//#define TOPIC_LEARN     "v1/esp32/ir/data/aprendido"
+//#define TOPIC_CMD       "v1/esp32/ir/control"
+#define MQTT_TOPIC_COMANDO  "casa/cremoto/" MQTT_CLIENT_ID "/comando"
+#define MQTT_TOPIC_EVENTO   "casa/cremoto/" MQTT_CLIENT_ID "/evento"
 
 
 // --- Definiciones de Modos del Sistema ---
@@ -30,7 +32,7 @@ typedef enum {
 #define EXAMPLE_IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
 #define EXAMPLE_IR_TX_GPIO_NUM       18
 #define EXAMPLE_IR_RX_GPIO_NUM       19
-#define EXAMPLE_IR_NEC_DECODE_MARGIN 200     
+#define EXAMPLE_IR_NEC_DECODE_MARGIN 500		// MDB (antes 200)     
 
 // NEC timing spec
 #define NEC_LEADING_CODE_DURATION_0  9000
@@ -41,3 +43,16 @@ typedef enum {
 #define NEC_PAYLOAD_ONE_DURATION_1   1690
 #define NEC_REPEAT_CODE_DURATION_0   9000
 #define NEC_REPEAT_CODE_DURATION_1   2250
+
+
+// --- Firebase Config ---
+#define FIREBASE_HOST "https://mdb-net.firebaseio.com"
+// Tópico para recibir la configuración de aprendizaje (JSON con nombre_dispositivo y nombre_boton)
+//#define TOPIC_CONFIG_LEARN "v1/esp32/ir/config/learn_setup"
+#define FIREBASE_PATH_BD    "CRemotos/.json"
+
+// --- Estructura para el contexto de aprendizaje ---
+typedef struct {
+    char dispositivo[32];
+    char boton[20];
+} context_aprendizaje_t;
