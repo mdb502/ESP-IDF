@@ -11,6 +11,7 @@
 #include "con_firebase.h"
 #include "driver/rmt_tx.h" // Para rmt_enable de transmisión
 #include "driver/rmt_rx.h" // Para rmt_enable de recepción
+#include <dirent.h> // Necesario para leer directorios
 
 
 static const char *TAG = "MAIN_APP";
@@ -25,6 +26,8 @@ static bool listo_para_capturar = false;
 void tarea_modo_aprendizaje(void *pvParameters);
 void tarea_modo_remoto(void *pvParameters);
 void cambiar_modo_trabajo(modo_sistema_t nuevo_modo);
+void tarea_sincronizacion_inicial(void *pvParameters);
+
 esp_err_t init_spiffs(void);
 
 // --- GESTIÓN DE MODOS ---
@@ -111,7 +114,26 @@ void tarea_modo_aprendizaje(void *pvParameters) {
     }
 }
 
+
+void listar_archivos_spiffs(void) {
+    ESP_LOGI("SPIFFS", "--- Listando archivos en /spiffs ---");
+    struct dirent *de;
+    DIR *dr = opendir("/spiffs"); 
+    if (dr == NULL) {
+        ESP_LOGE("SPIFFS", "No se pudo abrir el directorio /spiffs");
+        return;
+    }
+    while ((de = readdir(dr)) != NULL) {
+        ESP_LOGI("SPIFFS", "Encontrado: %s", de->d_name);
+    }
+    closedir(dr);
+    ESP_LOGI("SPIFFS", "------------------------------------");
+}
+
+
+
 void app_main(void) {
+	inicializar_niveles_log(); // <-- ¡Primero que todo!
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -120,6 +142,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
 
     init_spiffs();
+    listar_archivos_spiffs();
     funciones_db_init(); // Carga la DB en RAM
 
     if (wifi_init_sta() == ESP_OK) {
@@ -138,6 +161,12 @@ void app_main(void) {
 	    
 	    // 4. Iniciar MQTT
 	    con_mqtt_init(cambiar_modo_trabajo);
+	    
+	    // Lanzamos la auditoría de configuración como una tarea independiente
+	    // para que no bloquee el arranque del resto del sistema
+	    xTaskCreate(tarea_sincronizacion_inicial, "sync_cfg", 8192, NULL, 5, NULL);
+	    
+	    
 	}
 }
 
@@ -174,3 +203,63 @@ esp_err_t init_spiffs(void) {
     }
     return ESP_OK;
 }
+
+
+// --- TAREA: SINCRONIZACIÓN CON FIREBASE ---
+void tarea_sincronizacion_inicial(void *pvParameters) {
+    // Esperamos un par de segundos para asegurar que el stack TCP/IP y MQTT estén tranquilos
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    
+    ESP_LOGI(TAG, "Iniciando auditoria de configuracion (Ambito: %s)...", MQTT_CLIENT_ID);
+    
+    // 1. Obtener la lista de equipos definidos para este ESP32
+    char path_config[128];
+	// Construimos la ruta: "Nodos_Config/ESP32_Escritorio"
+	snprintf(path_config, sizeof(path_config), "%s/%s", "Nodos_Config", MQTT_CLIENT_ID);
+	
+	char *json_lista = con_firebase_get_json(path_config);
+    
+    if (json_lista) {
+        printf("\n**********************************\n");
+        printf("DATOS RECIBIDOS DE FIREBASE:\n%s\n", json_lista);
+        printf("**********************************\n\n");
+        
+        cJSON *lista = cJSON_Parse(json_lista);
+        if (cJSON_IsArray(lista)) {
+            cJSON *item = NULL;
+            cJSON_ArrayForEach(item, lista) {
+                const char *id_disp = item->valuestring;
+
+                if (id_disp) {
+                    // Verificamos si ya existe en el db_ir.json local (RAM)
+                    if (!funciones_db_existe_dispositivo(id_disp)) {
+                        ESP_LOGW(TAG, "Equipo '%s' NO encontrado. Descargando...", id_disp);
+                        
+                        char path_disp[128];
+                        snprintf(path_disp, sizeof(path_disp), "CRemotos/%s", id_disp);
+                        char *json_disp = con_firebase_get_json(path_disp);
+                        
+                        if (json_disp) {
+                            cJSON *obj_disp = cJSON_Parse(json_disp);
+                            if (obj_disp) {
+                                // Esta función guarda el nuevo equipo en RAM y persiste en SPIFFS
+                                funciones_db_fusionar_dispositivo(id_disp, obj_disp);
+                                cJSON_Delete(obj_disp);
+                            }
+                            free(json_disp);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Equipo '%s' ya está en memoria local.", id_disp);
+                    }
+                }
+            }
+        }
+        cJSON_Delete(lista);
+        free(json_lista);
+    }
+
+    ESP_LOGI(TAG, "Auditoria finalizada. Memoria libre: %d bytes", esp_get_free_heap_size());
+    vTaskDelete(NULL); // La tarea termina y libera sus recursos
+}
+
+

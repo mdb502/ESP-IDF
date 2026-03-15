@@ -49,7 +49,9 @@ typedef enum {
 #define FIREBASE_HOST "https://mdb-net.firebaseio.com"
 // Tópico para recibir la configuración de aprendizaje (JSON con nombre_dispositivo y nombre_boton)
 //#define TOPIC_CONFIG_LEARN "v1/esp32/ir/config/learn_setup"
-#define FIREBASE_PATH_BD    "CRemotos/.json"
+#define FIREBASE_PATH_NODOS "Nodos_Config"
+#define FIREBASE_PATH_REMOTOS "CRemotos"
+
 
 // --- Estructura para el contexto de aprendizaje ---
 typedef struct {

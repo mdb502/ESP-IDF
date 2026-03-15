@@ -1,9 +1,0 @@
-[
-  {
-    "id": "TV_SALA",
-    "comandos": [
-      { "c": "mute", "addr": "0x00FB", "cmd": "0x40BF" },
-      { "c": "power", "addr": "0x00FB", "cmd": "0x10EF" }
-    ]
-  }
-]

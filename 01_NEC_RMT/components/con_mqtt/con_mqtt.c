@@ -39,25 +39,52 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
 
         case MQTT_EVENT_DATA: {
-	        cJSON *root = cJSON_ParseWithLength(event->data, event->data_len);
-	        if (!root) return;
-	
-	        cJSON *accion = cJSON_GetObjectItem(root, "accion");
-	        if (cJSON_IsString(accion)) {
-	            if (strcmp(accion->valuestring, "aprender") == 0) {
-	                actualizar_contexto_aprendizaje(event->data, event->data_len);
-	                if (mode_callback) mode_callback(MODO_APRENDIZAJE);
-	            } 
-	            else if (strcmp(accion->valuestring, "disparar") == 0) {
-	                if (mode_callback) mode_callback(MODO_REMOTO_CONTROL);
-	                // Clonar el JSON para la cola (el main hará el free)
-	                char *copy = strndup(event->data, event->data_len);
-	                if (xQueueSend(cola_control_ir, &copy, 0) != pdPASS) free(copy);
-	            }
-	        }
-	        cJSON_Delete(root);
-	        break;
-	    }
+            ESP_LOGI("MQTT_CORE", "Datos recibidos: %.*s", event->data_len, event->data);
+    
+            cJSON *root = cJSON_ParseWithLength(event->data, event->data_len);
+            if (!root) {
+                ESP_LOGE("MQTT_CORE", "Error: JSON mal formado");
+                return;
+            }
+    
+            // Extraemos los posibles campos del JSON
+            cJSON *accion = cJSON_GetObjectItem(root, "accion");
+            cJSON *disp   = cJSON_GetObjectItem(root, "dispositivo");
+            cJSON *btn    = cJSON_GetObjectItem(root, "boton");
+    
+            // --- LÓGICA DE DECISIÓN (IF-ELSE) ---
+
+            // 1. ¿Es una orden de APRENDIZAJE? (Viene de la App)
+            if (cJSON_IsString(accion) && strcmp(accion->valuestring, "aprender") == 0) {
+                ESP_LOGI("MQTT_CORE", "Accion: Entrando en modo Aprendizaje");
+                actualizar_contexto_aprendizaje(event->data, event->data_len);
+                if (mode_callback) mode_callback(MODO_APRENDIZAJE);
+            } 
+            
+            // 2. ¿Es un comando de DISPARO IR? (Formato nuevo: dispositivo + boton)
+            else if (cJSON_IsString(disp) && cJSON_IsString(btn)) {
+                ESP_LOGI("MQTT_CORE", "Accion: Disparo IR detectado (%s -> %s)", 
+                         disp->valuestring, btn->valuestring);
+                
+                // Forzamos el modo remoto por si acaso
+                if (mode_callback) mode_callback(MODO_REMOTO_CONTROL);
+                
+                // Enviamos el JSON a la cola para que main.c lo procese
+                char *copy = strndup(event->data, event->data_len);
+                if (xQueueSend(cola_control_ir, &copy, 0) != pdPASS) {
+                    free(copy);
+                    ESP_LOGE("MQTT_CORE", "Error: Cola de control llena");
+                }
+            }
+            
+            // 3. No coincide con ninguno de los formatos esperados
+            else {
+                ESP_LOGW("MQTT_CORE", "JSON ignorado: No contiene una accion valida o par disp/btn");
+            }
+    
+            cJSON_Delete(root);
+            break;
+        }
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "Desconectado del servidor MQTT.");

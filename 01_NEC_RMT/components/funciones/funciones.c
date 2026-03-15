@@ -25,10 +25,13 @@ esp_err_t funciones_db_init(void) {
     // Usamos la variable static local, no ir_core
     if (db_cache) cJSON_Delete(db_cache);
 
-    FILE* f = fopen("/spiffs/db_controles.json", "r");
+    FILE* f = fopen("/spiffs/db_ir.json", "r");
+    // Si el archivo no existe (ESP32 virgen), creamos una DB vacía en RAM
     if (f == NULL) {
-        ESP_LOGE(TAG, "No se pudo abrir el archivo de DB");
-        return ESP_FAIL;
+        ESP_LOGW(TAG, "Archivo DB no encontrado. Creando base de datos vacia en RAM...");
+        db_cache = cJSON_CreateObject();
+        cJSON_AddObjectToObject(db_cache, "CRemotos");
+        return ESP_OK; 
     }
 
     fseek(f, 0, SEEK_END);
@@ -41,16 +44,76 @@ esp_err_t funciones_db_init(void) {
     fclose(f);
     data[fsize] = 0;
 
-    db_cache = cJSON_Parse(data); // <--- Cambio aquí
+    db_cache = cJSON_Parse(data);
     free(data);
 
-    if (db_cache == NULL) { // <--- Cambio aquí
-        ESP_LOGE(TAG, "Error al parsear JSON inicial");
-        return ESP_FAIL;
+    if (db_cache == NULL) {
+        ESP_LOGE(TAG, "Error al parsear JSON inicial. Creando objeto vacio.");
+        db_cache = cJSON_CreateObject();
+        cJSON_AddObjectToObject(db_cache, "CRemotos");
     }
+
     ESP_LOGI(TAG, "Base de datos cargada en RAM exitosamente");
     return ESP_OK;
 }
+
+
+esp_err_t funciones_db_fusionar_dispositivo(const char* id_dispositivo, cJSON* json_dispositivo_nuevo) {
+    if (!db_cache || !json_dispositivo_nuevo) return ESP_FAIL;
+
+    // 1. Buscamos el nodo raíz "CRemotos"
+    cJSON *cremotos = cJSON_GetObjectItem(db_cache, "CRemotos");
+    if (!cremotos) {
+        cremotos = cJSON_AddObjectToObject(db_cache, "CRemotos");
+    }
+
+    // 2. Si el dispositivo ya existe localmente, lo eliminamos para actualizarlo
+    if (cJSON_HasObjectItem(cremotos, id_dispositivo)) {
+        ESP_LOGI("FUNC_CORE", "Actualizando dispositivo existente: %s", id_dispositivo);
+        cJSON_DeleteItemFromObject(cremotos, id_dispositivo);
+    } else {
+        ESP_LOGI("FUNC_CORE", "Agregando nuevo dispositivo: %s", id_dispositivo);
+    }
+
+    // 3. Duplicamos el objeto descargado para que pertenezca a nuestro árbol de memoria
+    cJSON *copia_dispositivo = cJSON_Duplicate(json_dispositivo_nuevo, true);
+    cJSON_AddItemToObject(cremotos, id_dispositivo, copia_dispositivo);
+
+    // 4. Persistencia inmediata en SPIFFS
+    return funciones_db_guardar_a_spiffs();
+}
+
+
+bool funciones_db_existe_dispositivo(const char* id_dispositivo) {
+    if (!db_cache) return false;
+    cJSON *cremotos = cJSON_GetObjectItem(db_cache, "CRemotos");
+    return cJSON_HasObjectItem(cremotos, id_dispositivo);
+}
+
+
+esp_err_t funciones_db_guardar_a_spiffs(void) {
+    // Usamos PrintUnformatted para ahorrar espacio en el archivo
+    char *json_string = cJSON_PrintUnformatted(db_cache);
+    if (!json_string) return ESP_FAIL;
+
+    FILE *f = fopen("/spiffs/db_ir.json", "w");
+    if (f == NULL) {
+        ESP_LOGE("FUNC_CORE", "Error al abrir db_ir.json para escritura");
+        free(json_string);
+        return ESP_FAIL;
+    }
+
+    fprintf(f, "%s", json_string);
+    fclose(f);
+    free(json_string);
+    
+    ESP_LOGI("FUNC_CORE", "SPIFFS sincronizado (db_ir.json actualizado).");
+    return ESP_OK;
+}
+
+
+
+
 
 
 /**
@@ -182,39 +245,99 @@ void funciones_parse_nec_display(rmt_symbol_word_t *rmt_symbols, size_t symbol_n
  */
 resultado_busqueda_ir_t funciones_procesar_control_mqtt(const char *json_data, int len) {
     resultado_busqueda_ir_t res = {0, 0, false};
-    
-    // 1. Usar la variable local db_cache
-    if (!db_cache) return res; 
+    if (!db_cache) return res;
 
-    cJSON *root_mqtt = cJSON_ParseWithLength(json_data, len);
-    cJSON *id_buscado = cJSON_GetObjectItem(root_mqtt, "id");
-    cJSON *cmd_buscado = cJSON_GetObjectItem(root_mqtt, "c");
+    cJSON *root = cJSON_ParseWithLength(json_data, len);
+    if (!root) return res;
 
-    if (id_buscado && cmd_buscado) {
-        // 2. Aquí estaba el error, cambiamos ir_core.db_cache por db_cache
+    // --- LÓGICA DE ETIQUETAS FLEXIBLES ---
+    // Intentamos obtener el ID del dispositivo (puede venir como "id" o como "dispositivo")
+    cJSON *disp_node = cJSON_GetObjectItem(root, "id");
+    if (!disp_node) disp_node = cJSON_GetObjectItem(root, "dispositivo");
+
+    // Intentamos obtener el comando (puede venir como "c" o como "boton")
+    cJSON *cmd_node = cJSON_GetObjectItem(root, "c");
+    if (!cmd_node) cmd_node = cJSON_GetObjectItem(root, "boton");
+
+    if (cJSON_IsString(disp_node) && cJSON_IsString(cmd_node)) {
+        // Accedemos a la base de datos cargada en RAM
         cJSON *cremotos = cJSON_GetObjectItem(db_cache, "CRemotos");
-        cJSON *disp = cJSON_GetObjectItem(cremotos, id_buscado->valuestring);
-        
-        if (disp) {
-            cJSON *btn = cJSON_GetObjectItem(disp, cmd_buscado->valuestring);
-            if (cJSON_IsString(btn)) {
-                uint32_t raw = strtoul(btn->valuestring, NULL, 16);
-                res.address = (raw >> 16) & 0xFFFF;
-                res.command = raw & 0xFFFF;
-                res.encontrado = true;
+        if (cremotos) {
+            cJSON *dispositivo = cJSON_GetObjectItem(cremotos, disp_node->valuestring);
+            if (dispositivo) {
+                cJSON *codigo_hex = cJSON_GetObjectItem(dispositivo, cmd_node->valuestring);
+                if (cJSON_IsString(codigo_hex)) {
+                    // Convertimos el string "0x7C877F80" a valores numéricos
+                    uint32_t raw = strtoul(codigo_hex->valuestring, NULL, 16);
+                    res.address = (uint16_t)(raw >> 16);
+                    res.command = (uint16_t)(raw & 0xFFFF);
+                    res.encontrado = true;
+                    
+                    ESP_LOGI("FUNC_CORE", "Busqueda exitosa: %s -> %s (0x%04X 0x%04X)", 
+                             disp_node->valuestring, cmd_node->valuestring, res.address, res.command);
+                }
             }
         }
     }
-    cJSON_Delete(root_mqtt);
+
+    if (!res.encontrado) {
+        ESP_LOGW("FUNC_CORE", "No se encontro el comando en la base de datos");
+    }
+
+    cJSON_Delete(root);
     return res;
 }
+
 
 /**
  * @brief Envío directo usando el handle interno
  */
 void funciones_enviar_ir(uint16_t addr, uint16_t cmd) {
-    if (!ir_core.tx_chan) return;
-    ir_nec_scan_code_t codigo = { .address = addr, .command = cmd };
-    rmt_transmit_config_t transmit_cfg = {.loop_count = 0};
-    rmt_transmit(ir_core.tx_chan, ir_core.encoder, &codigo, sizeof(codigo), &transmit_cfg);
+    if (ir_core.tx_chan == NULL || ir_core.encoder == NULL) {
+        ESP_LOGE("FUNC_CORE", "TX no inicializado");
+        return;
+    }
+
+    ir_nec_scan_code_t scan_code = {
+        .address = addr,
+        .command = cmd,
+    };
+
+    rmt_transmit_config_t transmit_config = {
+        .loop_count = 0,
+    };
+
+    ESP_LOGI("FUNC_CORE", "Enviando IR -> Addr: 0x%04X, Cmd: 0x%04X", addr, cmd);
+
+    // Transmitimos
+    ESP_ERROR_CHECK(rmt_transmit(ir_core.tx_chan, ir_core.encoder, &scan_code, sizeof(scan_code), &transmit_config));
+
+    // En lugar de wait_all_done (que te da el error de 60ms), 
+    // usamos un pequeño delay de seguridad para que el hardware respire.
+    // Esto es mucho más amigable con tus tareas de MQTT.
+    vTaskDelay(pdMS_TO_TICKS(100)); 
+    
+    ESP_LOGI("FUNC_CORE", "Transmisión finalizada");
 }
+
+
+void inicializar_niveles_log(void) {
+    // 1. Silenciamos el "ruido" del sistema (Drivers internos)
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+    esp_log_level_set("mqtt_client", ESP_LOG_WARN);
+    esp_log_level_set("esp_netif_lwip", ESP_LOG_NONE); // Esto quita los logs de red
+    esp_log_level_set("nvs", ESP_LOG_WARN);
+    esp_log_level_set("phy_init", ESP_LOG_WARN);
+
+    // 2. Activamos TUS componentes (Nivel INFO para ver qué pasa)
+    esp_log_level_set("WIFI_CONN", ESP_LOG_INFO);  // Tu componente de WiFi
+    esp_log_level_set("MQTT_CORE", ESP_LOG_INFO);  // Tu componente MQTT
+    esp_log_level_set("FUNC_CORE", ESP_LOG_INFO);  // Gestión de DB y Hardware IR
+    esp_log_level_set("IR_RX", ESP_LOG_INFO);      // Driver RX
+    esp_log_level_set("MAIN_APP", ESP_LOG_INFO);   // Lógica principal
+    esp_log_level_set("DIAG", ESP_LOG_INFO);       // El diagnóstico de símbolos de ayer
+
+    ESP_LOGI("FUNC_CORE", "Niveles de LOG configurados (Terminal limpia).");
+}
+
+

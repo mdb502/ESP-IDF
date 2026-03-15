@@ -9,6 +9,7 @@
 #include "driver/rmt_rx.h" // Añadido para los handles
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "cJSON.h"
 
 
 /**
@@ -34,12 +35,42 @@ typedef struct {
     bool encontrado;
 } resultado_busqueda_ir_t;
 
+
+// --- GESTIÓN DE SISTEMA Y LOGS ---
+void inicializar_niveles_log(void);
+
+
+// --- GESTIÓN DE BASE DE DATOS (RAM & SPIFFS) ---
 /**
  * @brief Inicializa la base de datos cargándola desde SPIFFS a la RAM.
  * @return ESP_OK si tuvo éxito.
  */
 esp_err_t funciones_db_init(void);
 
+/**
+ * @brief Verifica si un dispositivo ya existe en la caché local.
+ */
+bool funciones_db_existe_dispositivo(const char* id_dispositivo);
+
+/**
+ * @brief Fusiona un nuevo objeto de dispositivo en la base de datos actual.
+ * Actualiza SPIFFS automáticamente.
+ */
+esp_err_t funciones_db_fusionar_dispositivo(const char* id_dispositivo, cJSON* json_dispositivo_nuevo);
+
+/**
+ * @brief Guarda el estado actual de la db_cache de RAM al archivo físico en SPIFFS.
+ */
+esp_err_t funciones_db_guardar_a_spiffs(void);
+
+/**
+ * @brief Actualiza o agrega un comando específico de forma local (útil tras aprendizaje).
+ */
+esp_err_t funciones_db_actualizar_comando_local(const char* id_disp, const char* boton, uint16_t addr, uint16_t cmd);
+
+
+
+// --- HARDWARE Y PROCESAMIENTO ---
 /**
  * @brief Configura y habilita los periféricos RMT para TX y RX.
  */
@@ -73,6 +104,8 @@ esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd);
  */
 bool funciones_nec_parse_frame(rmt_symbol_word_t *rmt_symbols, uint16_t *addr, uint16_t *cmd);
 
+
+// --- COMUNICACIÓN Y CONTEXTO ---
 /**
  * @brief Actualiza el contexto de qué dispositivo/botón se está aprendiendo.
  */

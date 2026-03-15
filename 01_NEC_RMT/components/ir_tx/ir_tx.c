@@ -6,9 +6,10 @@ esp_err_t ir_tx_init(rmt_channel_handle_t *tx_chan, rmt_encoder_handle_t *nec_en
     rmt_tx_channel_config_t tx_cfg = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = EXAMPLE_IR_RESOLUTION_HZ,
-        .mem_block_symbols = 64,
+        .mem_block_symbols = 128,
         .trans_queue_depth = 4,
         .gpio_num = EXAMPLE_IR_TX_GPIO_NUM,
+        .flags.with_dma = false,
     };
     ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_cfg, tx_chan));
 
