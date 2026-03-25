@@ -1,0 +1,3 @@
+idf_component_register(SRCS "funciones.c"
+                       INCLUDE_DIRS "include"
+                       REQUIRES json con_mqtt config)

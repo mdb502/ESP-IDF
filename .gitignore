@@ -13,6 +13,7 @@ RemoteSystemsTempFiles/
 
 # Ignorar proyectos
 02_NEC_RMT/
+03_NEC_RMT/
 
 # Opcional: Ignorar archivos temporales de Python (si usas scripts)
 __pycache__/

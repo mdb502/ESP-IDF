@@ -26,8 +26,3 @@ En estos proyectos se utilizan comúnmente los siguientes componentes:
 * **Comunicación:** MQTT mediante el broker HiveMQ Cloud.
 
 ---
-
-## Avances del proyecto
-Esta parte corresponde al procesamiento de la recepción y transmisión de comandos IR,
-con los parámetros de identificación del ESP en el archivo config.h.
-Las siguentes etapas están desarrolladas en versiones evolutivas en los proyectos siguientes.
