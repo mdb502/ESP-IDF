@@ -29,7 +29,7 @@ typedef enum {
 // Variable de configuración inicial (Paso 1)
 #define MODO_CONFIGURADO_INICIAL  MODO_REMOTO_CONTROL
 
-#define EXAMPLE_IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
+#define IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
 #define EXAMPLE_IR_TX_GPIO_NUM       18
 #define EXAMPLE_IR_RX_GPIO_NUM       19
 #define EXAMPLE_IR_NEC_DECODE_MARGIN 500		// MDB (antes 200)     
@@ -49,7 +49,7 @@ typedef enum {
 #define FIREBASE_HOST "https://mdb-net.firebaseio.com"
 // Tópico para recibir la configuración de aprendizaje (JSON con nombre_dispositivo y nombre_boton)
 //#define TOPIC_CONFIG_LEARN "v1/esp32/ir/config/learn_setup"
-#define FIREBASE_PATH_NODOS "Nodos_Config"
+#define FIREBASE_PATH_UBICACIONES "Nodos_Config"
 #define FIREBASE_PATH_REMOTOS "CRemotos"
 
 

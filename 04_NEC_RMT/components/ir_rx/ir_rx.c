@@ -22,9 +22,9 @@ void ir_rx_parse_frame(rmt_symbol_word_t *rmt_nec_symbols, size_t symbol_num) {
 esp_err_t ir_rx_init(rmt_channel_handle_t *rx_chan, QueueHandle_t *rx_queue) {
     rmt_rx_channel_config_t rx_cfg = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = EXAMPLE_IR_RESOLUTION_HZ,
+        .resolution_hz = IR_RESOLUTION_HZ,
         .mem_block_symbols = 64, 
-        .gpio_num = EXAMPLE_IR_RX_GPIO_NUM,
+        .gpio_num = IR_RX_GPIO_NUM,
     };
 
     // 1. Crear el canal

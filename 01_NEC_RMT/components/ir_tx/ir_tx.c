@@ -5,7 +5,7 @@
 esp_err_t ir_tx_init(rmt_channel_handle_t *tx_chan, rmt_encoder_handle_t *nec_encoder) {
     rmt_tx_channel_config_t tx_cfg = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = EXAMPLE_IR_RESOLUTION_HZ,
+        .resolution_hz = IR_RESOLUTION_HZ,
         .mem_block_symbols = 128,
         .trans_queue_depth = 4,
         .gpio_num = EXAMPLE_IR_TX_GPIO_NUM,
@@ -19,6 +19,6 @@ esp_err_t ir_tx_init(rmt_channel_handle_t *tx_chan, rmt_encoder_handle_t *nec_en
     };
     ESP_ERROR_CHECK(rmt_apply_carrier(*tx_chan, &carrier_cfg));
 
-    ir_nec_encoder_config_t nec_cfg = {.resolution = EXAMPLE_IR_RESOLUTION_HZ};
+    ir_nec_encoder_config_t nec_cfg = {.resolution = IR_RESOLUTION_HZ};
     return rmt_new_ir_nec_encoder(&nec_cfg, nec_encoder);
 }

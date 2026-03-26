@@ -18,9 +18,10 @@
  * @brief Resultado de una búsqueda en la base de datos local.
  */
 typedef struct {
-    uint16_t address;
-    uint16_t command;
     bool encontrado;
+    uint32_t address;
+    uint32_t command;
+    char norma[16]; // Añadimos este campo para guardar "NEC", "SHARP48", etc.
 } resultado_busqueda_ir_t;
 
 /**

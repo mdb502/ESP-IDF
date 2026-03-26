@@ -26,10 +26,10 @@ typedef enum {
 // Variable de configuración inicial (Paso 1)
 #define MODO_CONFIGURADO_INICIAL  MODO_REMOTO_CONTROL
 
-#define EXAMPLE_IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
-#define EXAMPLE_IR_TX_GPIO_NUM       18
-#define EXAMPLE_IR_RX_GPIO_NUM       19
-#define EXAMPLE_IR_NEC_DECODE_MARGIN 500		// MDB (antes 200)     
+#define IR_RESOLUTION_HZ     1000000 // 1MHz, 1 tick = 1us
+#define IR_TX_GPIO_NUM       18
+#define IR_RX_GPIO_NUM       19
+#define IR_NEC_DECODE_MARGIN 500		// MDB (antes 200)     
 
 // NEC timing spec
 #define NEC_LEADING_CODE_DURATION_0  9000
@@ -55,7 +55,7 @@ typedef enum {
 #define FIREBASE_AUTH "YjRsmKp11bPmHbOTTIh3lgxSDR2LtxQawXqhQNqr"
 // Tópico para recibir la configuración de aprendizaje (JSON con nombre_dispositivo y nombre_boton)
 //#define TOPIC_CONFIG_LEARN "v1/esp32/ir/config/learn_setup"
-#define FIREBASE_PATH_NODOS "Ubicaciones"
+#define FIREBASE_PATH_UBICACIONES "Ubicaciones"
 #define FIREBASE_PATH_REMOTOS "CRemotos"
 
 typedef struct {

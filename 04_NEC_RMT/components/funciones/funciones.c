@@ -61,8 +61,8 @@ esp_err_t funciones_hardware_init(void) {
 // ==========================================
 
 bool funciones_check_in_range(uint32_t signal_duration, uint32_t spec_duration) {
-    return (signal_duration < (spec_duration + EXAMPLE_IR_NEC_DECODE_MARGIN)) &&
-           (signal_duration > (spec_duration - EXAMPLE_IR_NEC_DECODE_MARGIN));
+    return (signal_duration < (spec_duration + IR_NEC_DECODE_MARGIN)) &&
+           (signal_duration > (spec_duration - IR_NEC_DECODE_MARGIN));
 }
 
 bool funciones_nec_parse_logic1(rmt_symbol_word_t *rmt_nec_symbols) {
@@ -327,9 +327,10 @@ bool funciones_db_existe_dispositivo(const char* id_dispositivo) {
 // ==========================================
 
 resultado_busqueda_ir_t funciones_procesar_control_mqtt(const char *json_data, int len) {
-    resultado_busqueda_ir_t res = {0, 0, false};
+    resultado_busqueda_ir_t res = {0}; // Inicialización limpia (gracias al cambio anterior)
     cJSON *root = cJSON_ParseWithLength(json_data, len);
     if (!root) return res;
+
     cJSON *disp_node = cJSON_GetObjectItem(root, "id");
     if (!disp_node) disp_node = cJSON_GetObjectItem(root, "dispositivo");
     cJSON *cmd_node = cJSON_GetObjectItem(root, "c");
@@ -338,14 +339,37 @@ resultado_busqueda_ir_t funciones_procesar_control_mqtt(const char *json_data, i
     if (cJSON_IsString(disp_node) && cJSON_IsString(cmd_node)) {
         cJSON *cremotos = cJSON_GetObjectItem(db_cache, "CRemotos");
         cJSON *dispositivo = cJSON_GetObjectItem(cremotos, disp_node->valuestring);
+        
         if (dispositivo) {
+            // 1. EXTRAER LA NORMA (Si no existe, asumimos NEC)
+            cJSON *norma_node = cJSON_GetObjectItem(dispositivo, "norma");
+            if (cJSON_IsString(norma_node)) {
+                strncpy(res.norma, norma_node->valuestring, sizeof(res.norma) - 1);
+            } else {
+                strcpy(res.norma, "NEC");
+            }
+
+            // 2. EXTRAER EL CÓDIGO HEX
             cJSON *codigo_hex = cJSON_GetObjectItem(dispositivo, cmd_node->valuestring);
             if (cJSON_IsString(codigo_hex)) {
-                uint32_t raw = strtoul(codigo_hex->valuestring, NULL, 16);
-                res.address = (uint16_t)(raw >> 16);
-                res.command = (uint16_t)(raw & 0xFFFF);
+                // Usamos strtoull (long long) para soportar códigos de más de 32 bits si fuera necesario
+                uint64_t raw = strtoull(codigo_hex->valuestring, NULL, 16);
+                
+                // Mapeo dinámico según protocolo
+                if (strcmp(res.norma, "SHARP48") == 0) {
+                    res.address = (uint16_t)(raw & 0xFFFF);
+                    res.command = (uint16_t)((raw >> 16) & 0xFFFF);
+                } else {
+                    // Mapeo estándar NEC (Address High, Command Low)
+                    res.address = (uint16_t)(raw >> 16);
+                    res.command = (uint16_t)(raw & 0xFFFF);
+                }
                 res.encontrado = true;
+                ESP_LOGI(TAG, "DB Local -> Disp:%s | Norma:%s | Addr:0x%04X | Cmd:0x%04X", 
+                         disp_node->valuestring, res.norma, res.address, res.command);
             }
+        } else {
+            ESP_LOGW(TAG, "Dispositivo %s no encontrado en DB local", disp_node->valuestring);
         }
     }
     cJSON_Delete(root);
@@ -357,32 +381,20 @@ resultado_busqueda_ir_t funciones_procesar_control_mqtt(const char *json_data, i
 // ==========================================
 
 esp_err_t funciones_ejecutar_comando_desde_json(const char *json_data) {
-    // 1. Parsear el JSON para ver qué dispositivo es
-    cJSON *root = cJSON_Parse(json_data);
-    if (!root) return ESP_FAIL;
-
-    // Intentamos obtener el ID del dispositivo (puede venir como "id" o "dispositivo")
-    cJSON *disp_node = cJSON_GetObjectItem(root, "id");
-    if (!disp_node) disp_node = cJSON_GetObjectItem(root, "dispositivo");
-
-    // 2. Buscar el código en la base de datos local
+    // 1. Buscar directamente en la DB local (esta función ya parsea internamente)
     resultado_busqueda_ir_t res = funciones_procesar_control_mqtt(json_data, strlen(json_data));
 
-    if (res.encontrado && disp_node && cJSON_IsString(disp_node)) {
-        // 3. Decidir qué protocolo usar
-        if (strcmp(disp_node->valuestring, "Receiver_Sharp_B530") == 0) {
-            // Usamos la nueva función para Sharp de 48 bits
+    if (res.encontrado) {
+        if (strcmp(res.norma, "SHARP48") == 0) {
             funciones_enviar_ir_sharp_48(res.address, res.command);
         } else {
-            // El protocolo NEC estándar que ya tenías
+            // NEC por defecto para cualquier otra norma no especificada aún
             funciones_enviar_ir(res.address, res.command);
         }
-        cJSON_Delete(root);
         return ESP_OK;
     }
 
-    cJSON_Delete(root);
-    ESP_LOGW(TAG, "Comando no ejecutado: Dispositivo no encontrado o JSON inválido.");
+    ESP_LOGW(TAG, "Comando ignorado: No existe en la base de datos.");
     return ESP_FAIL;
 }
 
@@ -442,7 +454,7 @@ void tarea_sincronizacion_inicial(void *pvParameters) {
     if (g_config.mqtt_id[0] == '\0') { vTaskDelete(NULL); return; }
     funciones_db_reiniciar();
     char path_config[128];
-    snprintf(path_config, sizeof(path_config), "Nodos_Config/%s", g_config.mqtt_id);
+    snprintf(path_config, sizeof(path_config), "%s/%s", FIREBASE_PATH_UBICACIONES, g_config.mqtt_id);
     char *json_lista = con_firebase_get_json(path_config);
     if (json_lista) {
         cJSON *lista = cJSON_Parse(json_lista);
