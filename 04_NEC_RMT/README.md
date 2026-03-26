@@ -2,6 +2,7 @@ ESP-IDF NEC RMT
 ====================
 
 Este repositorio contiene una colección de proyectos y experimentos desarrollados utilizando el **Espressif IoT Development Framework (ESP-IDF)**. El objetivo es documentar el aprendizaje de periféricos, protocolos y arquitectura de software para sistemas embebidos.
+Una línea para desperta a GitHub
 
 ## 🛠️ Entorno de Desarrollo
 - **IDE:** Espressif-IDE (basado en Eclipse).
