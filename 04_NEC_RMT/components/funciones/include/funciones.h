@@ -59,7 +59,7 @@ void funciones_enviar_ir(uint16_t addr, uint16_t cmd);
 /**
  * @brief Bloquea la tarea hasta recibir una trama NEC o alcanzar el timeout.
  */
-esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd);
+esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd, char *norma_out);
 
 
 // --- GESTIÓN DE BASE DE DATOS (SPIFFS/RAM) ---
@@ -115,7 +115,8 @@ esp_err_t funciones_ejecutar_comando_desde_json(const char *json_data);
 /**
  * @brief Configura el contexto (ID equipo/botón) para la siguiente captura IR.
  */
-void funciones_set_contexto_aprendizaje(const char* data, int len);
+void funciones_set_contexto_aprendizaje(const char* data, size_t len);
+void utils_trim(char *dest, const char *src, size_t dest_size);
 
 /**
  * @brief Limpia de forma segura los mensajes pendientes en una cola.

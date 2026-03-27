@@ -7,7 +7,7 @@
 /**
  * @brief Sube un comando IR a Firebase (PATCH).
  */
-esp_err_t con_firebase_patch_comando(const char* path_db, const char* btn, uint16_t addr, uint16_t cmd);
+esp_err_t con_firebase_patch_comando(const char* dispositivo, const char* btn, uint16_t addr, uint16_t cmd, const char* norma);
 
 /**
  * @brief Obtiene un JSON desde Firebase (GET). 

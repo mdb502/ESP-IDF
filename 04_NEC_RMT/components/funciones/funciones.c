@@ -29,6 +29,26 @@ int8_t funciones_sharp_get_bit(rmt_symbol_word_t *sym);
 bool funciones_sharp_parse_frame(rmt_symbol_word_t *rmt_symbols, uint16_t *addr, uint16_t *cmd);
 bool funciones_nec_parse_frame(rmt_symbol_word_t *rmt_symbols, uint16_t *addr, uint16_t *cmd);
 
+void utils_trim(char *dest, const char *src, size_t dest_size) {
+    if (!src || !dest) return;
+    
+    // Saltamos espacios al inicio
+    while (*src == ' ') src++;
+    
+    // Copiamos hasta el final o hasta encontrar un espacio al final (o agotar tamaño)
+    strncpy(dest, src, dest_size - 1);
+    dest[dest_size - 1] = '\0';
+    
+    // Eliminamos espacios al final
+    char *back = dest + strlen(dest) - 1;
+    while (back >= dest && *back == ' ') {
+        *back = '\0';
+        back--;
+    }
+}
+
+
+
 // ==========================================
 // 1. GESTIÓN DE HARDWARE Y LOGS
 // ==========================================
@@ -207,7 +227,7 @@ void funciones_enviar_ir(uint16_t addr, uint16_t cmd) {
     vTaskDelay(pdMS_TO_TICKS(100)); 
 }
 
-esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd) {
+esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd, char *norma_out) {
     rmt_symbol_word_t raw_symbols[64];
     rmt_rx_done_event_data_t rx_data;
     rmt_receive_config_t receive_cfg = { 
@@ -228,20 +248,17 @@ esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd) {
     // Esperar a que la cola reciba el evento de "RX finalizado"
     if (xQueueReceive(ir_core.rx_queue, &rx_data, pdMS_TO_TICKS(10000)) == pdPASS) {
         
-        // --- BLOQUE DE DEBUG CORREGIDO (Solo se ejecuta si hay símbolos reales) ---
         if (rx_data.num_symbols > 0) {
-            ESP_LOGI(TAG, "--- DEBUG SÍMBOLOS (%d) ---", rx_data.num_symbols);
-            for (int i = 0; i < rx_data.num_symbols; i++) {
-                printf("%d,%d | ", (int)rx_data.received_symbols[i].duration0, 
-                                   (int)rx_data.received_symbols[i].duration1);
-                if ((i + 1) % 4 == 0) printf("\n");
-            }
-            printf("\n---------------------------\n");
+            // (Tu bloque de debug de símbolos se mantiene igual aquí)
+            // ... printf de duraciones ...
         }
+
+        // --- DETECCIÓN INTELIGENTE ---
 
         // Intento de parseo NEC
         if (rx_data.num_symbols >= 33 && funciones_nec_parse_frame(rx_data.received_symbols, addr, cmd)) {
             ESP_LOGI(TAG, "Protocolo NEC detectado");
+            if (norma_out) strcpy(norma_out, "NEC"); // <--- NUEVO: Informamos la norma
             return ESP_OK;
         }
         
@@ -249,6 +266,7 @@ esp_err_t funciones_esperar_y_parsear_ir(uint16_t *addr, uint16_t *cmd) {
         if (rx_data.num_symbols >= 49) { 
             if (funciones_sharp_parse_frame(rx_data.received_symbols, addr, cmd)) {
                 ESP_LOGI(TAG, "Protocolo SHARP 48-bit detectado");
+                if (norma_out) strcpy(norma_out, "SHARP48"); // <--- NUEVO: Informamos la norma
                 return ESP_OK;
             }
         }
@@ -398,16 +416,26 @@ esp_err_t funciones_ejecutar_comando_desde_json(const char *json_data) {
     return ESP_FAIL;
 }
 
-void funciones_set_contexto_aprendizaje(const char* data, int len) {
-    cJSON *root = cJSON_ParseWithLength(data, len);
+
+void funciones_set_contexto_aprendizaje(const char *json_data, size_t len) {
+	listo_para_capturar = false; // Reset por seguridad antes de parsear
+    cJSON *root = cJSON_ParseWithLength(json_data, len);
     if (root) {
-        cJSON *d = cJSON_GetObjectItem(root, "dispositivo");
-        cJSON *b = cJSON_GetObjectItem(root, "boton");
-        if (d && b) {
-            strncpy(ctx_learn.dispositivo, d->valuestring, sizeof(ctx_learn.dispositivo) - 1);
-            strncpy(ctx_learn.boton, b->valuestring, sizeof(ctx_learn.boton) - 1);
-            listo_para_capturar = true;
-            ESP_LOGI(TAG, "Aprendizaje: %s -> %s", ctx_learn.dispositivo, ctx_learn.boton);
+        cJSON *disp = cJSON_GetObjectItem(root, "dispositivo");
+        cJSON *btn = cJSON_GetObjectItem(root, "boton");
+
+        if (cJSON_IsString(disp) && cJSON_IsString(btn)) {
+            // Limpiamos los strings (evita espacios como " Player_...")
+            utils_trim(ctx_learn.dispositivo, disp->valuestring, sizeof(ctx_learn.dispositivo));
+            utils_trim(ctx_learn.boton, btn->valuestring, sizeof(ctx_learn.boton));
+
+            ESP_LOGI("FUNC_CORE", "Contexto Limpio: [%s] -> [%s]", 
+                     ctx_learn.dispositivo, ctx_learn.boton);
+
+            // --- LA PIEZA FALTANTE ---
+            listo_para_capturar = true; 
+            ESP_LOGI("FUNC_CORE", "Modo aprendizaje ACTIVADO.");
+            // --------------------------
         }
         cJSON_Delete(root);
     }
@@ -436,15 +464,39 @@ void tarea_modo_remoto(void *pvParameters) {
 
 void tarea_modo_aprendizaje(void *pvParameters) {
     while (1) {
-        if (!listo_para_capturar) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        if (!listo_para_capturar) { 
+            // ESP_LOGD("DEBUG", "Esperando activación de bandera..."); // Opcional: log muy ruidoso
+            vTaskDelay(pdMS_TO_TICKS(500)); 
+            continue; 
+        }
+
+        ESP_LOGI("DEBUG", "Bandera OK. Entrando a esperar IR...");
+
         uint16_t addr = 0, cmd = 0;
-        if (funciones_esperar_y_parsear_ir(&addr, &cmd) == ESP_OK) {
-            if (con_firebase_patch_comando(ctx_learn.dispositivo, ctx_learn.boton, addr, cmd) == ESP_OK) {
+        char norma_detectada[20] = {0};
+
+        // 1. Aquí es donde el código se "detiene" hasta recibir un rayo IR
+        esp_err_t res = funciones_esperar_y_parsear_ir(&addr, &cmd, norma_detectada);
+
+        if (res == ESP_OK) {
+            ESP_LOGI("LEARN", "¡IR Capturado! Boton: %s, Código: 0x%04X%04X, Norma: %s", 
+                     ctx_learn.boton, addr, cmd, norma_detectada);
+
+            // 2. Enviamos a Firebase
+            ESP_LOGI("DEBUG", "Intentando PATCH en Firebase...");
+            if (con_firebase_patch_comando(ctx_learn.dispositivo, ctx_learn.boton, addr, cmd, norma_detectada) == ESP_OK) {
+                
+                ESP_LOGI("DEBUG", "Firebase actualizado. Notificando por MQTT...");
                 mqtt_enviar_raw(MQTT_TOPIC_EVENTO, "{\"status\":\"aprendido_ok\"}");
                 listo_para_capturar = false; 
+                
             } else {
+                ESP_LOGE("DEBUG", "Error en con_firebase_patch_comando");
                 mqtt_enviar_raw(MQTT_TOPIC_EVENTO, "{\"status\":\"ERROR_CLOUD\"}");
             }
+        } else {
+            // Este log es vital: si sale mucho, es que el RMT recibe basura o tramas que no entiende
+            ESP_LOGW("DEBUG", "Fallo al parsear IR o Timeout. Reintentando...");
         }
     }
 }
@@ -478,3 +530,4 @@ void tarea_sincronizacion_inicial(void *pvParameters) {
     ESP_LOGI(TAG, "Sincronización finalizada.");
     vTaskDelete(NULL);
 }
+
