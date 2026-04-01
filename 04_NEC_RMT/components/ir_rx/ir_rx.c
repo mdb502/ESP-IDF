@@ -20,6 +20,10 @@ void ir_rx_parse_frame(rmt_symbol_word_t *rmt_nec_symbols, size_t symbol_num) {
 
 
 esp_err_t ir_rx_init(rmt_channel_handle_t *rx_chan, QueueHandle_t *rx_queue) {
+    // 1. Crear la cola PRIMERO
+    *rx_queue = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
+    if (*rx_queue == NULL) return ESP_ERR_NO_MEM;
+
     rmt_rx_channel_config_t rx_cfg = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = IR_RESOLUTION_HZ,
@@ -27,18 +31,16 @@ esp_err_t ir_rx_init(rmt_channel_handle_t *rx_chan, QueueHandle_t *rx_queue) {
         .gpio_num = IR_RX_GPIO_NUM,
     };
 
-    // 1. Crear el canal
+    // 2. Crear el canal
     ESP_ERROR_CHECK(rmt_new_rx_channel(&rx_cfg, rx_chan));
 
-    // 2. Crear la cola y registrar callbacks
-    *rx_queue = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
+    // 3. Registrar callbacks pasando la COLA (no el puntero a la cola)
     rmt_rx_event_callbacks_t cbs = {
         .on_recv_done = example_rmt_rx_done_callback
     };
     
-    // Devolvemos el resultado del registro de callbacks
-    return rmt_rx_register_event_callbacks(*rx_chan, &cbs, *rx_queue);
-    
-    // --- BLOQUE 3 ELIMINADO ---
-    // Ya no habilitamos aquí para evitar el mensaje "channel not in init state"
+    // IMPORTANTE: Pasamos *rx_queue directamente como user_data
+    ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(*rx_chan, &cbs, *rx_queue));
+
+    return ESP_OK;
 }

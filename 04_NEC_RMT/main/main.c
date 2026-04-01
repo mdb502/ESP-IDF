@@ -69,10 +69,16 @@ void app_main(void) {
     if (wifi_init_sta(g_config.wifi_ssid, g_config.wifi_pass) == ESP_OK) {
         funciones_hardware_init();
         cola_control_ir = xQueueCreate(10, sizeof(char *));
-        cambiar_modo_trabajo(MODO_REMOTO_CONTROL);
+        
+        // 1. Sincronizamos PRIMERO (puedes hacerla bloqueante o esperar un evento)
+        // Por ahora, lanzamos la tarea pero asegúrate que funcione.
+        xTaskCreate(tarea_sincronizacion_inicial, "sync_task", 8192, NULL, 10, NULL);
+        
+        // 2. Iniciamos MQTT y el modo de trabajo
         con_mqtt_init(cambiar_modo_trabajo, g_config.mqtt_id);
-        xTaskCreate(tarea_sincronizacion_inicial, "sync_task", 8192, NULL, 5, NULL);
+        cambiar_modo_trabajo(MODO_REMOTO_CONTROL);
     }
     
     ESP_LOGI(TAG, "Sistema listo. Heap: %u", (unsigned int)esp_get_free_heap_size());
+    mqtt_enviar_raw(MQTT_TOPIC_EVENTO, "{\"event\":\"SYSTEM_BOOT\", \"version\":\"1.1\"}");
 }
